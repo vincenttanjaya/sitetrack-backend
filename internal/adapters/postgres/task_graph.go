@@ -1,6 +1,8 @@
 package postgres
 
 import (
+	"encoding/json"
+	"fmt"
 	"sort"
 
 	"github.com/vincenttanjaya/sitetrack-backend/internal/domain"
@@ -18,9 +20,9 @@ func (t numberedTaskReference) reference() domain.TaskReference {
 	return domain.TaskReference{ID: t.ID, Name: t.Name, Status: t.Status}
 }
 
-type taskEdge struct {
-	TaskNumber         int64
-	PrerequisiteNumber int64
+type taskGraphNode struct {
+	reference domain.TaskReference
+	neighbors []int64
 }
 
 func readTaskDetail(db *gorm.DB, projectID, taskID, today string) (domain.TaskDetail, error) {
@@ -34,44 +36,78 @@ FROM tasks WHERE project_id = ? AND id = ?`, projectID, taskID).Row().Scan(
 		return domain.TaskDetail{}, dbError(err)
 	}
 
-	var edges []taskEdge
-	if err := db.Raw(`SELECT task_number, prerequisite_number FROM task_dependencies WHERE project_id = ?`, projectID).Scan(&edges).Error; err != nil {
+	// Recursive cardinality estimates can reflect the dense parts of a project
+	// and trigger JIT compilation even for a tiny reachable component.
+	if err := db.Exec("SET LOCAL jit = off").Error; err != nil {
 		return domain.TaskDetail{}, dbError(err)
 	}
-	forward := make(map[int64][]int64)
-	reverse := make(map[int64][]int64)
-	for _, edge := range edges {
-		forward[edge.TaskNumber] = append(forward[edge.TaskNumber], edge.PrerequisiteNumber)
-		reverse[edge.PrerequisiteNumber] = append(reverse[edge.PrerequisiteNumber], edge.TaskNumber)
+	forward, err := readTaskGraph(db, projectID, number, false)
+	if err != nil {
+		return domain.TaskDetail{}, err
+	}
+	reverse, err := readTaskGraph(db, projectID, number, true)
+	if err != nil {
+		return domain.TaskDetail{}, err
 	}
 
-	task.Prerequisites = []domain.TaskDistance{}
-	task.Dependents = []domain.TaskDistance{}
-	task.DirectDependencies = []domain.TaskReference{}
-	task.DependentCount = len(reverse[number])
-	if len(forward[number])+task.DependentCount > 0 {
-		var rows []numberedTaskReference
-		if err := db.Raw(`SELECT number, id, name, status FROM tasks WHERE project_id = ?`, projectID).Scan(&rows).Error; err != nil {
-			return domain.TaskDetail{}, dbError(err)
+	task.Prerequisites = taskDistances(number, forward)
+	task.Dependents = taskDistances(number, reverse)
+	task.DependentCount = len(reverse[number].neighbors)
+	task.DirectDependencies = make([]domain.TaskReference, 0, len(forward[number].neighbors))
+	for _, item := range task.Prerequisites {
+		if item.Distance > 1 {
+			break
 		}
-		references := make(map[int64]domain.TaskReference, len(rows))
-		for _, row := range rows {
-			references[row.Number] = row.reference()
-		}
-
-		task.Prerequisites = taskDistances(number, forward, references)
-		task.Dependents = taskDistances(number, reverse, references)
-		for _, item := range task.Prerequisites {
-			if item.Distance > 1 {
-				break
-			}
-			task.DirectDependencies = append(task.DirectDependencies, item.TaskReference)
-		}
+		task.DirectDependencies = append(task.DirectDependencies, item.TaskReference)
 	}
 	return task.WithStatus(task.Status, today), nil
 }
 
-func taskDistances(number int64, adjacency map[int64][]int64, references map[int64]domain.TaskReference) []domain.TaskDistance {
+func readTaskGraph(db *gorm.DB, projectID string, number int64, reverse bool) (map[int64]taskGraphNode, error) {
+	source, target := "task_number", "prerequisite_number"
+	if reverse {
+		source, target = target, source
+	}
+	// UNION visits each vertex once even when many paths reach it. The
+	// parameterized lookup uses the edge index in the chosen direction.
+	// Return adjacency once per reachable vertex for the shortest-path walk.
+	query := fmt.Sprintf(`WITH RECURSIVE reachable(number) AS (
+    SELECT CAST(? AS bigint)
+    UNION
+    SELECT adjacent.number FROM reachable r
+    CROSS JOIN LATERAL (
+        SELECT %[2]s AS number FROM task_dependencies
+        WHERE project_id = ? AND %[1]s = r.number
+        OFFSET 0
+    ) adjacent
+)
+SELECT r.number, t.id, t.name, t.status, to_json(ARRAY(
+    SELECT %[2]s FROM task_dependencies WHERE project_id = t.project_id AND %[1]s = r.number
+))
+FROM reachable r JOIN tasks t ON t.project_id = ? AND t.number = r.number`, source, target)
+	rows, err := db.Raw(query, number, projectID, projectID).Rows()
+	if err != nil {
+		return nil, dbError(err)
+	}
+	defer rows.Close()
+
+	graph := make(map[int64]taskGraphNode)
+	for rows.Next() {
+		var vertex int64
+		var node taskGraphNode
+		var neighbors []byte
+		if err := rows.Scan(&vertex, &node.reference.ID, &node.reference.Name, &node.reference.Status, &neighbors); err != nil {
+			return nil, dbError(err)
+		}
+		if err := json.Unmarshal(neighbors, &node.neighbors); err != nil {
+			return nil, fmt.Errorf("decode task graph adjacency: %w", err)
+		}
+		graph[vertex] = node
+	}
+	return graph, dbError(rows.Err())
+}
+
+func taskDistances(number int64, graph map[int64]taskGraphNode) []domain.TaskDistance {
 	type hop struct {
 		number   int64
 		distance int
@@ -80,7 +116,7 @@ func taskDistances(number int64, adjacency map[int64][]int64, references map[int
 	seen := map[int64]bool{number: true}
 	for head := 0; head < len(queue); head++ {
 		current := queue[head]
-		for _, neighbor := range adjacency[current.number] {
+		for _, neighbor := range graph[current.number].neighbors {
 			if !seen[neighbor] {
 				seen[neighbor] = true
 				queue = append(queue, hop{number: neighbor, distance: current.distance + 1})
@@ -96,7 +132,7 @@ func taskDistances(number int64, adjacency map[int64][]int64, references map[int
 	})
 	items := make([]domain.TaskDistance, 0, len(hops))
 	for _, hop := range hops {
-		items = append(items, domain.TaskDistance{TaskReference: references[hop.number], Distance: hop.distance})
+		items = append(items, domain.TaskDistance{TaskReference: graph[hop.number].reference, Distance: hop.distance})
 	}
 	return items
 }

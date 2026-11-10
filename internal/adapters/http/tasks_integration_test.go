@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -393,4 +394,49 @@ VALUES ('PRJ-0002', 1, 'Private', '2026-11-10', '2026-11-12')`).Error; err != ni
 	f.expect(t, http.MethodGet, "/v1/projects/PRJ-0002/tasks", "", http.StatusNotFound)
 	f.expect(t, http.MethodGet, taskTestPath+"/"+otherID, "", http.StatusNotFound)
 	f.link(t, taskTestA, otherID, http.StatusNotFound)
+}
+
+func TestTaskDetailAndUpdateAvoidUnrelatedDenseGraph(t *testing.T) {
+	f := newTaskTestFixture(t, domain.RoleUser)
+	f.create(t, "A", "2026-11-10", "2026-11-12")
+	f.create(t, "B", "2026-11-10", "2026-11-12")
+	f.link(t, taskTestB, taskTestA, http.StatusCreated)
+	if err := f.db.Exec(`INSERT INTO tasks (project_id, number, name, start_date, end_date)
+SELECT 'PRJ-0001', n, 'Dense component ' || n, '2026-11-10', '2026-11-12'
+FROM generate_series(3, 602) n`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Exec(`INSERT INTO task_dependencies (project_id, task_number, prerequisite_number)
+SELECT 'PRJ-0001', n, prerequisite
+FROM generate_series(4, 602) n
+CROSS JOIN LATERAL generate_series(3, n - 1) prerequisite`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Exec("ANALYZE task_dependencies").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	for _, req := range []struct{ method, path, body string }{
+		{http.MethodGet, taskTestPath + "/" + taskTestB, ""},
+		{http.MethodPut, taskTestPath + "/" + taskTestB, `{"name":"B","start_date":"2026-11-10","end_date":"2026-11-12"}`},
+	} {
+		t.Run(req.method, func(t *testing.T) {
+			started := time.Now()
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			detail := taskDecode[taskTestItem](t, f.expect(t, req.method, req.path, req.body, http.StatusOK))
+			runtime.ReadMemStats(&after)
+			allocated := after.TotalAlloc - before.TotalAlloc
+			t.Logf("179,700 unrelated edges: %s allocated %d bytes in %s", req.method, allocated, time.Since(started))
+			if len(detail.Prerequisites) != 1 || detail.Prerequisites[0].ID != taskTestA ||
+				detail.Prerequisites[0].Distance != 1 || len(detail.Dependents) != 0 {
+				t.Fatalf("detail contains unrelated tasks: %+v", detail)
+			}
+			// A two-task component should require far less memory than even
+			// a single pair of int64 values per unrelated edge.
+			if allocated > 2<<20 {
+				t.Fatalf("detail allocation %d bytes exceeded 2 MiB", allocated)
+			}
+		})
+	}
 }
