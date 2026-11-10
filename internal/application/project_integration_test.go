@@ -252,3 +252,51 @@ func TestInvitationWithdrawalRacesAcceptance(t *testing.T) {
 		t.Fatalf("neither invitation action succeeded: withdraw=%v accept=%v", withdrawErr, acceptErr)
 	}
 }
+
+func TestProjectMetricCursorsKeepZeroCountsAndExcludeHiddenProjects(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.Open(t)
+	projects := application.NewProjects(postgres.NewProjectRepository(db), func() time.Time {
+		return time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	}, time.UTC)
+	owner := testActor(t, db, "owner", domain.RoleUser)
+	outsider := testActor(t, db, "outsider", domain.RoleUser)
+	for _, actor := range []domain.Actor{owner, owner, owner, outsider} {
+		if _, err := projects.Create(ctx, actor, domain.ProjectInput{Name: "Site", StartDate: "2026-01-01", EndDate: "2027-01-01"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Exec(`INSERT INTO tasks (project_id,number,name,start_date,end_date,status) VALUES
+  ('PRJ-0001',1,'Done','2026-01-01','2026-10-02','done'),
+  ('PRJ-0001',2,'Late','2026-01-01','2026-10-02','in_progress'),
+  ('PRJ-0002',1,'Late','2026-10-03','2026-12-02','not_started'),
+  ('PRJ-0002',2,'Late','2026-10-03','2026-12-02','not_started'),
+  ('PRJ-0004',1,'Hidden','2026-01-01','2026-10-02','not_started'),
+  ('PRJ-0004',2,'Hidden','2026-01-01','2026-10-02','not_started'),
+  ('PRJ-0004',3,'Hidden','2026-01-01','2026-10-02','not_started')`).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, sort, order string
+		lateOnly          bool
+		ids               []string
+	}{
+		{"late descending", "late_tasks", "desc", false, []string{"PRJ-0002", "PRJ-0001", "PRJ-0003"}},
+		{"late only ascending", "late_tasks", "asc", true, []string{"PRJ-0001", "PRJ-0002"}},
+		{"percent done and tie descending", "percent_done", "desc", false, []string{"PRJ-0001", "PRJ-0003", "PRJ-0002"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := domain.ProjectFilter{Sort: test.sort, Order: test.order, LateOnly: test.lateOnly, Page: domain.Page{Limit: 1}}
+			for _, want := range test.ids {
+				page, err := projects.List(ctx, owner, f)
+				if err != nil || len(page.Items) != 1 || page.Items[0].ID != want {
+					t.Fatalf("metric page = %+v, %v; want %s", page, err, want)
+				}
+				f.Page.Cursor = page.NextCursor
+			}
+			if f.Page.Cursor != "" {
+				t.Fatalf("metric cursor continued past authorized results: %s", f.Page.Cursor)
+			}
+		})
+	}
+}

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
 	"strings"
 	"time"
@@ -95,7 +96,18 @@ func getProject(db *gorm.DB, a domain.Actor, id string, today time.Time) (domain
 }
 
 func (r *ProjectRepository) List(ctx context.Context, a domain.Actor, f domain.ProjectFilter, today time.Time) (domain.PageResult[domain.Project], error) {
-	return projectOverview(r.db.WithContext(ctx), a, f, "", today)
+	var result domain.PageResult[domain.Project]
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// JIT compilation can dominate this short, bounded page query even when
+		// its ranking and task-count estimates imply a high execution cost.
+		if err := tx.Exec("SET LOCAL jit = off").Error; err != nil {
+			return dbError(err)
+		}
+		var err error
+		result, err = projectOverview(tx, a, f, "", today)
+		return err
+	}, &sql.TxOptions{ReadOnly: true})
+	return result, err
 }
 
 const projectLateSQL = `((t.status <> 'done' AND t.end_date < ?::date)
@@ -104,28 +116,11 @@ const projectPercentSQL = `COALESCE(round(10000.0 * count(*) FILTER (WHERE t.sta
 
 func projectOverview(db *gorm.DB, a domain.Actor, f domain.ProjectFilter, id string, today time.Time) (domain.PageResult[domain.Project], error) {
 	result := domain.PageResult[domain.Project]{Items: []domain.Project{}}
-	args := []any{a.UserID}
-	var sortKey, sortJoin string
-	switch f.Sort {
-	case "name":
-		sortKey = "lower(p.name)"
-	case "start_date":
-		sortKey = "p.start_date"
-	case "percent_done":
-		sortKey = "metric.value"
-		sortJoin = "CROSS JOIN LATERAL (SELECT " + projectPercentSQL + " AS value FROM tasks t WHERE t.project_id = p.id) metric"
-	case "late_tasks":
-		sortKey = "metric.value"
-		sortJoin = "CROSS JOIN LATERAL (SELECT count(*) AS value FROM tasks t WHERE t.project_id = p.id AND " + projectLateSQL + ") metric"
-		args = append(args, today, today)
-	default:
-		return result, domain.Invalid("invalid project sort")
-	}
-	query := `WITH ranked AS (
-  SELECT p.id,p.number,p.name,p.start_date,p.end_date,COALESCE(m.is_admin,false) AS is_admin,` + sortKey + ` AS sort_key
+	args := []any{a.UserID, a.Role == domain.RoleSuperAdmin}
+	query := `WITH visible AS (
+  SELECT p.id,p.number,p.name,p.start_date,p.end_date,COALESCE(m.is_admin,false) AS is_admin
   FROM projects p LEFT JOIN project_members m ON m.project_id=p.id AND m.user_id=?
-  ` + sortJoin + ` WHERE (? OR m.user_id IS NOT NULL)`
-	args = append(args, a.Role == domain.RoleSuperAdmin)
+  WHERE (? OR m.user_id IS NOT NULL)`
 	if id != "" {
 		query += " AND p.id = ?"
 		args = append(args, id)
@@ -135,15 +130,39 @@ func projectOverview(db *gorm.DB, a domain.Actor, f domain.ProjectFilter, id str
 		query += " AND (p.name ILIKE ? OR p.id ILIKE ?)"
 		args = append(args, pattern, pattern)
 	}
-	if f.LateOnly {
-		if f.Sort == "late_tasks" {
-			query += " AND metric.value > 0"
-		} else {
-			query += " AND EXISTS (SELECT 1 FROM tasks t WHERE t.project_id=p.id AND " + projectLateSQL + ")"
-			args = append(args, today, today)
-		}
+	if f.LateOnly && f.Sort != "late_tasks" {
+		query += " AND EXISTS (SELECT 1 FROM tasks t WHERE t.project_id=p.id AND " + projectLateSQL + ")"
+		args = append(args, today, today)
 	}
-	query += "), page AS (SELECT * FROM ranked"
+	query += ")"
+
+	var sortKey, sortJoin string
+	switch f.Sort {
+	case "name":
+		sortKey = "lower(v.name)"
+	case "start_date":
+		sortKey = "v.start_date"
+	case "percent_done":
+		sortKey = "metric.value"
+		sortJoin = "CROSS JOIN LATERAL (SELECT " + projectPercentSQL + " AS value FROM tasks t WHERE t.project_id = v.id) metric"
+	case "late_tasks":
+		// Rank the visible projects with one grouped task scan. Repeating a
+		// date-filtered heap scan for each project is costly for SuperAdmin.
+		query += `, late_counts AS (
+  SELECT t.project_id,count(*) AS value
+  FROM tasks t JOIN visible v ON v.id=t.project_id
+  WHERE ` + projectLateSQL + `
+  GROUP BY t.project_id)`
+		args = append(args, today, today)
+		sortKey = "COALESCE(metric.value,0)"
+		sortJoin = "LEFT JOIN late_counts metric ON metric.project_id = v.id"
+		if f.LateOnly {
+			sortJoin = "JOIN late_counts metric ON metric.project_id = v.id"
+		}
+	default:
+		return result, domain.Invalid("invalid project sort")
+	}
+	query += ", ranked AS (SELECT v.*," + sortKey + " AS sort_key FROM visible v " + sortJoin + "), page AS (SELECT * FROM ranked"
 	direction, operator := "ASC", ">"
 	if f.Order == "desc" {
 		direction, operator = "DESC", "<"
