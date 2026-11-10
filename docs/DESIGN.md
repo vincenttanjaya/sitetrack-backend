@@ -2,13 +2,13 @@
 
 ## Source and scope
 
-Implement the Backend Engineer Take-Home Assignment dated 6 November 2026. The authoritative brief is [SiteTrack-Backend-Assignment.pdf](https://seronlabs-my.sharepoint.com/:b:/p/sarvesh/IQAwwLqfMWocQ77RmM6JC1bKAcjZIeX511GvRqigg2tu8aE?e=y1DHJG). Its full text was retrieved before implementation. The brief permits decisions where it is silent; decisions below are implementation choices, not extra assignment requirements.
+This backend implements the Backend Engineer Take-Home Assignment dated 6 November 2026. The authoritative brief is [SiteTrack-Backend-Assignment.pdf](https://seronlabs-my.sharepoint.com/:b:/p/sarvesh/IQAwwLqfMWocQ77RmM6JC1bKAcjZIeX511GvRqigg2tu8aE?e=y1DHJG). The brief permits decisions where it is silent; decisions below are implementation choices, not extra assignment requirements.
 
 Backend only: Go, PostgreSQL, JWT authentication, projects/members/invitations, tasks/dependencies, materials/stores/deliveries, all eleven screen APIs, and a realistic scale-data generator. A clean `docker compose up` must start a usable application and database without manual setup.
 
 ## Chosen approach
 
-The user selected Go, hexagonal architecture, and an ORM/raw-SQL combination. Use GORM for straightforward persistence and parameterized SQL for authorization-scoped aggregates, graph traversal, locking and stock movements. A SQL-only adapter would make simple CRUD more verbose; putting ORM models in the domain would couple business rules to persistence. Keep persistence models and GORM types inside adapters.
+The backend uses Go, hexagonal architecture, and an ORM/raw-SQL combination. GORM handles straightforward persistence; parameterized SQL handles authorization-scoped aggregates, graph traversal, locking and stock movements. A SQL-only adapter would make simple CRUD more verbose; putting ORM models in the domain would couple business rules to persistence. Persistence models and GORM types stay inside adapters.
 
 `internal/domain` contains business types, errors and pure rules. `internal/ports` contains interfaces expressed in domain types. `internal/application` orchestrates use cases and authorization. HTTP and PostgreSQL adapters implement external boundaries. `cmd/api` wires dependencies; `internal/platform` provides configuration and lifecycle utilities. Versioned SQL migrations own the schema; do not use AutoMigrate.
 
@@ -26,7 +26,7 @@ The user selected Go, hexagonal architecture, and an ORM/raw-SQL combination. Us
 - Company stock status: zero = Out of stock; positive and at/below reorder point = Low stock; above reorder = Available. Company stock includes quantity in transit to projects. Project stock includes date of last delivery in/out.
 - Support every screen's fields, filters, search and sorting from the brief; document request/response contracts. Lists must have bounded pagination and deterministic ordering. Never silently ignore unsupported query parameters that alter filtering or sorting.
 
-## Decisions to implement and document
+## Implementation decisions
 
 - Date-only inputs use YYYY-MM-DD; one explicit business timezone governs today (default Asia/Muscat). Use an injectable clock in rules/tests.
 - Separate short-lived JWT access tokens from rotating, hashed, opaque refresh tokens. Keep session validation in PostgreSQL for immediate revocation.
@@ -39,6 +39,6 @@ The user selected Go, hexagonal architecture, and an ORM/raw-SQL combination. Us
 
 ## Scale and proof
 
-Generator target: 5,000 users; 2,000 projects (up to 50 members each); 50,000 invitations; 500,000 tasks (up to 3,000 per project); 1,000,000 dependency edges; 20,000 materials; 400,000 deliveries with 3,000,000 material lines. Generate valid realistic graphs, sessions/credentials suitable for inspection, mixed statuses/dates, and conserved nonnegative stock. Batch SQL/COPY and deterministic data are preferable to millions of ORM calls. Include a small preset and a full preset, progress and clear rerun behavior. Do not fabricate large-dataset measurements.
+Generator target: 5,000 users; 2,000 projects (up to 50 members each); 50,000 invitations; 500,000 tasks (up to 3,000 per project); 1,000,000 dependency edges; 20,000 materials; 400,000 deliveries with 3,000,000 material lines. The generator creates valid graphs, inspection credentials, mixed statuses/dates, and conserved nonnegative stock using set-based SQL. It includes small and full presets, progress reporting and explicit rerun behavior. Measured results are recorded in [performance verification](PERFORMANCE.md).
 
 Verification covers real PostgreSQL transactions, immediate access changes, graph and admin races, concurrent terminal delivery transitions, stock conservation, filtered authorization-safe reads, pagination, migrations, seed execution and HTTP flows. Use isolated PostgreSQL containers and verify the complete Compose startup without changing unrelated local services. Validate configuration and repeat the relevant checks in CI.
