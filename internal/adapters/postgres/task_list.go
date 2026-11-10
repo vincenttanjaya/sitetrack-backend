@@ -36,6 +36,10 @@ var taskListSorts = map[string]taskListSort{
 
 func (r *TaskRepository) ListTasks(ctx context.Context, actor domain.Actor, projectID string, q domain.TaskListQuery, today string) (result domain.PageResult[domain.Task], err error) {
 	err = r.projectTaskRead(ctx, actor, projectID, func(tx *gorm.DB) error {
+		// Dense dependency counts can trigger costly JIT compilation for a single page.
+		if err := tx.Exec("SET LOCAL jit = off").Error; err != nil {
+			return dbError(err)
+		}
 		result, err = queryTaskList(tx, projectID, q, today)
 		return err
 	})
