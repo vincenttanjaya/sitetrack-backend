@@ -22,6 +22,8 @@ const (
 	tokenIssuer       = "sitetrack"
 	tokenAudience     = "sitetrack-api"
 	dummyPasswordHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+	maxEmailBytes     = 254
+	maxPasswordBytes  = 72
 )
 
 type AuthService struct {
@@ -45,7 +47,7 @@ func (s *AuthService) Register(ctx context.Context, in domain.RegisterInput) (do
 		return domain.User{}, domain.Invalid("unknown app role")
 	}
 	address, err := mail.ParseAddress(in.Email)
-	if err != nil || address.Address != in.Email || len(in.Email) > 254 {
+	if err != nil || address.Address != in.Email || len(in.Email) > maxEmailBytes {
 		return domain.User{}, domain.Invalid("email is invalid")
 	}
 	for _, c := range in.Email {
@@ -53,7 +55,7 @@ func (s *AuthService) Register(ctx context.Context, in domain.RegisterInput) (do
 			return domain.User{}, domain.Invalid("email must use ASCII characters")
 		}
 	}
-	if len(in.Password) < 8 || len(in.Password) > 72 {
+	if len(in.Password) < 8 || len(in.Password) > maxPasswordBytes {
 		return domain.User{}, domain.Invalid("password must be between 8 and 72 bytes")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
@@ -66,7 +68,13 @@ func (s *AuthService) Register(ctx context.Context, in domain.RegisterInput) (do
 func normalizedEmail(email string) string { return strings.ToLower(strings.TrimSpace(email)) }
 
 func (s *AuthService) Login(ctx context.Context, email, password string) (domain.TokenPair, error) {
-	user, hash, err := s.repo.Credentials(ctx, normalizedEmail(email))
+	email = normalizedEmail(email)
+	// JSON decoding replaces malformed Unicode with U+FFFD.
+	if len(email) > maxEmailBytes || strings.ContainsAny(email, "\x00\ufffd") ||
+		!utf8.ValidString(email) || len(password) > maxPasswordBytes {
+		return domain.TokenPair{}, domain.ErrUnauthorized
+	}
+	user, hash, err := s.repo.Credentials(ctx, email)
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		return domain.TokenPair{}, err
 	}

@@ -55,3 +55,37 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 		t.Fatalf("unknown input: %d %s", malformed.Code, malformed.Body)
 	}
 }
+
+func TestLoginRejectsInvalidCredentials(t *testing.T) {
+	db := testdb.Open(t)
+	auth := application.NewAuth(postgres.NewAuthRepository(db), []byte("test signing key longer than thirty-two bytes"), time.Now, time.Minute, time.Hour)
+	handler := api.NewRouter(auth, nil)
+	register := httptest.NewRecorder()
+	handler.ServeHTTP(register, httptest.NewRequest(http.MethodPost, "/v1/auth/register",
+		strings.NewReader(`{"name":"Asha","email":"asha@example.com","password":"safe-password","role":"user"}`)))
+	if register.Code != http.StatusCreated {
+		t.Fatalf("register: %d %s", register.Code, register.Body)
+	}
+
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{"NUL in email", `{"email":"asha\u0000@example.com","password":"safe-password"}`},
+		{"malformed UTF-8 in email", `{"email":"asha` + "\xff" + `@example.com","password":"safe-password"}`},
+		{"malformed address", `{"email":"not-an-email","password":"safe-password"}`},
+		{"oversized email", `{"email":"` + strings.Repeat("a", 255) + `@example.com","password":"safe-password"}`},
+		{"oversized password", `{"email":"asha@example.com","password":"` + strings.Repeat("a", 73) + `"}`},
+		{"unknown email", `{"email":"unknown@example.com","password":"safe-password"}`},
+		{"incorrect password", `{"email":"asha@example.com","password":"wrong-password"}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(tt.body)))
+			const failure = `{"error":{"code":"unauthorized","message":"authentication failed"}}`
+			if w.Code != http.StatusUnauthorized || strings.TrimSpace(w.Body.String()) != failure {
+				t.Fatalf("login: got %d %s, want 401 %s", w.Code, w.Body, failure)
+			}
+		})
+	}
+}
