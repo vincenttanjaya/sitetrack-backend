@@ -192,3 +192,63 @@ func TestProjectSummariesAndStableTiedPagination(t *testing.T) {
 		t.Fatalf("minimum width project id = %+v, %v", p, err)
 	}
 }
+
+func TestProjectUpdateAndHistoryProtectedDeletion(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.Open(t)
+	projects := application.NewProjects(postgres.NewProjectRepository(db), time.Now, time.UTC)
+	owner := testActor(t, db, "owner", domain.RoleUser)
+	p, err := projects.Create(ctx, owner, domain.ProjectInput{Name: "Old name", StartDate: "2026-01-01", EndDate: "2027-01-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := projects.Update(ctx, owner, p.ID, domain.ProjectInput{Name: "New name", StartDate: "2026-02-01", EndDate: "2027-02-01"})
+	if err != nil || updated.ID != p.ID || updated.Name != "New name" || updated.StartDate != "2026-02-01" || updated.EndDate != "2027-02-01" {
+		t.Fatalf("project update = %+v, %v", updated, err)
+	}
+	if err := db.Exec(`INSERT INTO deliveries (project_id,direction,status,sent_by,resolved_by,resolved_at)
+  VALUES (?, 'company_to_project', 'delivered', ?, ?, now())`, p.ID, owner.UserID, owner.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := projects.Delete(ctx, owner, p.ID); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("history-protected delete: %v", err)
+	}
+	if _, err := projects.Get(ctx, owner, p.ID); err != nil {
+		t.Fatalf("project disappeared after refused delete: %v", err)
+	}
+}
+
+func TestInvitationWithdrawalRacesAcceptance(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.Open(t)
+	projects := application.NewProjects(postgres.NewProjectRepository(db), time.Now, time.UTC)
+	owner := testActor(t, db, "owner", domain.RoleUser)
+	invited := testActor(t, db, "invited", domain.RoleUser)
+	p, err := projects.Create(ctx, owner, domain.ProjectInput{Name: "Site", StartDate: "2026-01-01", EndDate: "2027-01-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invite, err := projects.Invite(ctx, owner, p.ID, "invited@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	withdrawn, accepted := make(chan error, 1), make(chan error, 1)
+	go func() { <-start; withdrawn <- projects.Withdraw(ctx, owner, p.ID, invite.ID) }()
+	go func() { <-start; _, err := projects.Respond(ctx, invited, invite.ID, true); accepted <- err }()
+	close(start)
+	withdrawErr, acceptErr := <-withdrawn, <-accepted
+	_, viewErr := projects.Get(ctx, invited, p.ID)
+	switch {
+	case withdrawErr == nil:
+		if !errors.Is(acceptErr, domain.ErrNotFound) || !errors.Is(viewErr, domain.ErrNotFound) {
+			t.Fatalf("withdrawn invitation granted membership: accept=%v view=%v", acceptErr, viewErr)
+		}
+	case acceptErr == nil:
+		if !errors.Is(withdrawErr, domain.ErrConflict) || viewErr != nil {
+			t.Fatalf("accepted invitation did not preserve membership: withdraw=%v view=%v", withdrawErr, viewErr)
+		}
+	default:
+		t.Fatalf("neither invitation action succeeded: withdraw=%v accept=%v", withdrawErr, acceptErr)
+	}
+}
