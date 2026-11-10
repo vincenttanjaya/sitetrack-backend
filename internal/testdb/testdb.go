@@ -18,6 +18,22 @@ import (
 
 func Open(t *testing.T) *gorm.DB {
 	t.Helper()
+	db := OpenUnmigrated(t)
+	pool, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+// OpenUnmigrated leaves the schema empty for upgrade tests.
+func OpenUnmigrated(t *testing.T) *gorm.DB {
+	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("set TEST_DATABASE_URL to run PostgreSQL integration tests")
@@ -52,8 +68,5 @@ func Open(t *testing.T) *gorm.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { pool.Close() })
-	if err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
 	return db
 }

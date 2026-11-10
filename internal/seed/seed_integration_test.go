@@ -41,6 +41,8 @@ func TestSmallSeedIsValidAndRequiresReset(t *testing.T) {
    WHERE t.status <> 'not_started' AND pre.status <> 'done'`,
 		"pending invitations to current members": `SELECT count(*) FROM invitations i JOIN project_members m
    ON m.project_id=i.project_id AND m.user_id=i.recipient_id WHERE i.status='pending'`,
+		"invitation labels match seeded projects": `SELECT count(*) FROM invitations i JOIN projects p ON p.id=i.project_id
+   WHERE i.project_name IS DISTINCT FROM p.name`,
 		"reservations match outgoing active lines": `WITH active AS (
    SELECT s.id AS store_id,l.material_id,sum(l.quantity) AS quantity
    FROM deliveries d JOIN delivery_lines l ON l.delivery_id=d.id

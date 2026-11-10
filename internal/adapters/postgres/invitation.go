@@ -11,10 +11,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const invitationSelect = `SELECT i.id,i.project_id,p.name AS project_name,i.recipient_id,
+const invitationSelect = `SELECT i.id,i.project_id,i.project_name,i.recipient_id,
  recipient.name AS recipient_name,recipient.email AS recipient_email,i.sender_id,sender.name AS sender_name,
  i.status,i.created_at,i.read_at,i.responded_at
- FROM invitations i JOIN projects p ON p.id=i.project_id
+ FROM invitations i
  JOIN users recipient ON recipient.id=i.recipient_id JOIN users sender ON sender.id=i.sender_id`
 
 func invitationByID(db *gorm.DB, id int64) (domain.Invitation, error) {
@@ -47,7 +47,8 @@ func (r *ProjectRepository) Invite(ctx context.Context, a domain.Actor, id, emai
 			return domain.Conflict("recipient is already a member")
 		}
 		var inviteID int64
-		err := tx.Raw("INSERT INTO invitations (project_id,recipient_id,sender_id) VALUES (?,?,?) RETURNING id", id, recipient, a.UserID).Row().Scan(&inviteID)
+		err := tx.Raw(`INSERT INTO invitations (project_id,project_name,recipient_id,sender_id)
+ SELECT id,name,?,? FROM projects WHERE id=? RETURNING id`, recipient, a.UserID, id).Row().Scan(&inviteID)
 		if err != nil {
 			return dbError(err)
 		}

@@ -102,6 +102,8 @@ Member fields are `user_id`, `name`, `email`, `is_admin`, and `joined_at`. Admin
 
 Invitation fields are `id`, `project_id`, `project_name`, `recipient_id`, `recipient_name`, `recipient_email`, `sender_id`, `sender_name`, `status`, `created_at`, nullable `read_at`, and nullable `responded_at`. Only the recipient can respond to a pending invitation. Accepting creates membership and both responses mark the notification read. Withdrawn invitations disappear from the recipient's inbox. The other visible statuses are `pending`, `accepted`, and `rejected`.
 
+`project_name` is the project label saved when the invitation was sent. Later renames do not change it. For older invitations that had no stored label, it is the name at upgrade time if the invite was pending or the recipient had project access then; otherwise it is the project ID.
+
 ## Tasks and dependencies
 
 Let `/tasks` below stand for `/v1/projects/{projectID}/tasks`.

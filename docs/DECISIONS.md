@@ -16,6 +16,7 @@
 - A started task can gain a new prerequisite only when the prerequisite is Done. Combined with start and reopen rules and acyclicity, every Done prerequisite has a fully Done chain. This lets task and project list queries derive Blocked with an indexed direct-prerequisite existence check. Task details and status checks traverse the task's reachable prerequisites and dependents with indexed edge lookups. Distances are shortest edge counts.
 - A task with incoming dependency references requires explicit unlinking before deletion. A project with any delivery history or outstanding inventory cannot be deleted. Empty projects can be deleted along with their tasks, memberships, invitations, and store.
 - Notification read status is explicit. Viewing the list leaves it unchanged. Responding marks the invitation read. The frontend can fetch the unread count separately on every screen.
+- Invitations store the project label at send time so retained notifications do not expose later renames. Older invitations have no original label to recover. The upgrade stores the current label for pending invites, current members and SuperAdmins, and uses the project ID for everyone else.
 
 ## Inventory
 
