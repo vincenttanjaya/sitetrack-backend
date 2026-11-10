@@ -45,11 +45,19 @@ func TestRuntimeRejectsInvalidAuthConfiguration(t *testing.T) {
 	}
 }
 
-func TestRuntimeRequiresNamedBusinessTimezone(t *testing.T) {
+func TestRuntimeRequiresUnambiguousBusinessTimezone(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://local/sitetrack")
 	t.Setenv("JWT_SECRET", "")
-	t.Setenv("BUSINESS_TIMEZONE", "Local")
-	if _, err := platform.LoadConfig(); err == nil {
-		t.Fatal("host-local timezone has no portable PostgreSQL identifier")
+	for _, zone := range []string{"Local", "CET", "EET", "WET", "MET"} {
+		t.Setenv("BUSINESS_TIMEZONE", zone)
+		if _, err := platform.LoadConfig(); err == nil {
+			t.Errorf("accepted ambiguous timezone %s", zone)
+		}
+	}
+	for _, zone := range []string{"UTC", "Europe/Paris", "Etc/GMT+4"} {
+		t.Setenv("BUSINESS_TIMEZONE", zone)
+		if cfg, err := platform.LoadConfig(); err != nil || cfg.Location.String() != zone {
+			t.Errorf("failed to load timezone %s: %v", zone, err)
+		}
 	}
 }

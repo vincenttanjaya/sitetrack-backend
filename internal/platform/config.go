@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -37,8 +38,8 @@ func LoadConfig() (Config, error) {
 
 	var err error
 	zone := envDefault("BUSINESS_TIMEZONE", "Asia/Muscat")
-	if zone == "Local" {
-		return c, errors.New("BUSINESS_TIMEZONE must be a named IANA time zone or UTC")
+	if zone != "UTC" && !strings.Contains(zone, "/") {
+		return c, errors.New("BUSINESS_TIMEZONE must be UTC or a regional IANA name such as Asia/Muscat")
 	}
 	c.Location, err = time.LoadLocation(zone)
 	if err != nil {

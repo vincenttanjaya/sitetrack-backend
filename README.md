@@ -21,7 +21,7 @@ export DATABASE_URL='postgres://sitetrack:your-password@127.0.0.1:5432/sitetrack
 go run ./cmd/api
 ```
 
-`APP_ADDR` defaults to `:8080`. `BUSINESS_TIMEZONE` accepts a named IANA zone or `UTC` and defaults to `Asia/Muscat`. Access and refresh durations default to `15m` and `720h` and can be set through `ACCESS_TOKEN_TTL` and `REFRESH_TOKEN_TTL`.
+`APP_ADDR` defaults to `:8080`. `BUSINESS_TIMEZONE` accepts `UTC` or a regional IANA name such as `Europe/Paris` or `Etc/GMT+4`. It defaults to `Asia/Muscat`. Use a regional name for daylight-saving rules. Access and refresh durations default to `15m` and `720h` and can be set through `ACCESS_TOKEN_TTL` and `REFRESH_TOKEN_TTL`.
 
 ## Load sample data
 
