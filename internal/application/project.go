@@ -26,6 +26,10 @@ func (s *ProjectService) today() time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
+func validProjectID(id string) bool {
+	return id != "" && len(id) <= 64 && utf8.ValidString(id) && !strings.ContainsRune(id, 0)
+}
+
 func cleanProject(in domain.ProjectInput) (domain.ProjectInput, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Name == "" || utf8.RuneCountInString(in.Name) > 200 || strings.ContainsRune(in.Name, 0) {
@@ -44,7 +48,7 @@ func (s *ProjectService) Create(ctx context.Context, a domain.Actor, in domain.P
 
 func (s *ProjectService) List(ctx context.Context, a domain.Actor, f domain.ProjectFilter) (domain.PageResult[domain.Project], error) {
 	f.Search = strings.TrimSpace(f.Search)
-	if utf8.RuneCountInString(f.Search) > 200 || strings.ContainsRune(f.Search, 0) {
+	if !utf8.ValidString(f.Search) || utf8.RuneCountInString(f.Search) > 200 || strings.ContainsRune(f.Search, 0) {
 		return domain.PageResult[domain.Project]{}, domain.Invalid("search is too long or invalid")
 	}
 	if f.Sort == "" {
@@ -65,10 +69,16 @@ func (s *ProjectService) List(ctx context.Context, a domain.Actor, f domain.Proj
 }
 
 func (s *ProjectService) Get(ctx context.Context, a domain.Actor, id string) (domain.Project, error) {
+	if !validProjectID(id) {
+		return domain.Project{}, domain.ErrNotFound
+	}
 	return s.repo.Get(ctx, a, id, s.today())
 }
 
 func (s *ProjectService) Update(ctx context.Context, a domain.Actor, id string, in domain.ProjectInput) (domain.Project, error) {
+	if !validProjectID(id) {
+		return domain.Project{}, domain.ErrNotFound
+	}
 	in, err := cleanProject(in)
 	if err != nil {
 		return domain.Project{}, err
@@ -77,22 +87,37 @@ func (s *ProjectService) Update(ctx context.Context, a domain.Actor, id string, 
 }
 
 func (s *ProjectService) Delete(ctx context.Context, a domain.Actor, id string) error {
+	if !validProjectID(id) {
+		return domain.ErrNotFound
+	}
 	return s.repo.Delete(ctx, a, id)
 }
 
 func (s *ProjectService) Members(ctx context.Context, a domain.Actor, id string, p domain.Page) (domain.PageResult[domain.Member], error) {
+	if !validProjectID(id) {
+		return domain.PageResult[domain.Member]{}, domain.ErrNotFound
+	}
 	return s.repo.Members(ctx, a, id, p)
 }
 
 func (s *ProjectService) SetMemberAdmin(ctx context.Context, a domain.Actor, id string, userID int64, admin bool) error {
+	if !validProjectID(id) {
+		return domain.ErrNotFound
+	}
 	return s.repo.SetMemberAdmin(ctx, a, id, userID, admin)
 }
 
 func (s *ProjectService) RemoveMember(ctx context.Context, a domain.Actor, id string, userID int64) error {
+	if !validProjectID(id) {
+		return domain.ErrNotFound
+	}
 	return s.repo.RemoveMember(ctx, a, id, userID)
 }
 
 func (s *ProjectService) Invite(ctx context.Context, a domain.Actor, id, email string) (domain.Invitation, error) {
+	if !validProjectID(id) {
+		return domain.Invitation{}, domain.ErrNotFound
+	}
 	email = normalizedEmail(email)
 	addr, err := mail.ParseAddress(email)
 	if err != nil || addr.Address != email || len(email) > 254 {
@@ -102,10 +127,16 @@ func (s *ProjectService) Invite(ctx context.Context, a domain.Actor, id, email s
 }
 
 func (s *ProjectService) Invitations(ctx context.Context, a domain.Actor, id string, p domain.Page) (domain.PageResult[domain.Invitation], error) {
+	if !validProjectID(id) {
+		return domain.PageResult[domain.Invitation]{}, domain.ErrNotFound
+	}
 	return s.repo.Invitations(ctx, a, id, p)
 }
 
 func (s *ProjectService) Withdraw(ctx context.Context, a domain.Actor, id string, invitationID int64) error {
+	if !validProjectID(id) {
+		return domain.ErrNotFound
+	}
 	return s.repo.Withdraw(ctx, a, id, invitationID)
 }
 
