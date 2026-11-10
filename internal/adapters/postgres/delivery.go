@@ -138,11 +138,13 @@ func (r *InventoryRepository) ListDeliveries(ctx context.Context, actor domain.A
 		if f.Status != "" {
 			q = q.Where("d.status = ?", f.Status)
 		}
-		if f.SentOnOrAfter != nil {
-			q = q.Where("d.sent_at >= ?", *f.SentOnOrAfter)
+		if f.CoarseSentOnOrAfter != nil {
+			q = q.Where("d.sent_at >= ? AND (d.sent_at AT TIME ZONE ?::text)::date >= ?::date",
+				*f.CoarseSentOnOrAfter, f.BusinessTimezone, f.StartDate)
 		}
-		if f.SentBefore != nil {
-			q = q.Where("d.sent_at < ?", *f.SentBefore)
+		if f.CoarseSentBefore != nil {
+			q = q.Where("d.sent_at < ? AND (d.sent_at AT TIME ZONE ?::text)::date <= ?::date",
+				*f.CoarseSentBefore, f.BusinessTimezone, f.EndDate)
 		}
 		cursor, err := domain.DecodeCursor(f.Page.Cursor, 3)
 		if err != nil {

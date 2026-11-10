@@ -44,3 +44,12 @@ func TestRuntimeRejectsInvalidAuthConfiguration(t *testing.T) {
 		t.Fatal("accepted refresh duration shorter than access")
 	}
 }
+
+func TestRuntimeRequiresNamedBusinessTimezone(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://local/sitetrack")
+	t.Setenv("JWT_SECRET", "")
+	t.Setenv("BUSINESS_TIMEZONE", "Local")
+	if _, err := platform.LoadConfig(); err == nil {
+		t.Fatal("host-local timezone has no portable PostgreSQL identifier")
+	}
+}

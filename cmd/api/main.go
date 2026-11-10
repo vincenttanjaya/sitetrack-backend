@@ -47,6 +47,9 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer pool.Close()
+	if _, err := pool.ExecContext(startup, "SELECT now() AT TIME ZONE $1::text", cfg.Location.String()); err != nil {
+		return fmt.Errorf("validate BUSINESS_TIMEZONE in PostgreSQL: %w", err)
+	}
 	if err := migrations.Apply(startup, pool); err != nil {
 		return err
 	}

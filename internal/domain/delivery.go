@@ -105,9 +105,10 @@ type DeliveryFilter struct {
 	Direction          DeliveryDirection
 	Status             DeliveryStatus
 	StartDate, EndDate string
-	// SentBefore is exclusive. The application converts date filters to instants.
-	SentOnOrAfter, SentBefore *time.Time
-	Page                      Page
+	BusinessTimezone   string
+	// Coarse bounds let PostgreSQL use sent_at indexes before testing the local date.
+	CoarseSentOnOrAfter, CoarseSentBefore *time.Time
+	Page                                  Page
 }
 
 const MaxDeliveryLines = 100

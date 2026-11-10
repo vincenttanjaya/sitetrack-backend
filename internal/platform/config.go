@@ -36,7 +36,11 @@ func LoadConfig() (Config, error) {
 	}
 
 	var err error
-	c.Location, err = time.LoadLocation(envDefault("BUSINESS_TIMEZONE", "Asia/Muscat"))
+	zone := envDefault("BUSINESS_TIMEZONE", "Asia/Muscat")
+	if zone == "Local" {
+		return c, errors.New("BUSINESS_TIMEZONE must be a named IANA time zone or UTC")
+	}
+	c.Location, err = time.LoadLocation(zone)
 	if err != nil {
 		return c, fmt.Errorf("BUSINESS_TIMEZONE: %w", err)
 	}

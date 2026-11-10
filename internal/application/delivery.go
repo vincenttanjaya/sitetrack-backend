@@ -75,28 +75,27 @@ func (s *InventoryService) ListDeliveries(ctx context.Context, actor domain.Acto
 			return domain.PageResult[domain.Delivery]{}, domain.Invalid("invalid project_id")
 		}
 	}
-	f.SentOnOrAfter, f.SentBefore = nil, nil
-	for _, field := range []struct {
-		raw     string
-		target  **time.Time
-		nextDay bool
-	}{
-		{f.StartDate, &f.SentOnOrAfter, false}, {f.EndDate, &f.SentBefore, true},
-	} {
-		if field.raw == "" {
-			continue
-		}
-		parsed, err := domain.ParseDate(field.raw)
+	// Keep the UTC bounds wide enough for any IANA offset. The repository
+	// checks the exact local date without constructing a local midnight.
+	f.BusinessTimezone = s.location.String()
+	f.CoarseSentOnOrAfter, f.CoarseSentBefore = nil, nil
+	if f.StartDate != "" {
+		start, err := domain.ParseDate(f.StartDate)
 		if err != nil {
 			return domain.PageResult[domain.Delivery]{}, err
 		}
-		start := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, s.location)
-		if field.nextDay {
-			start = start.AddDate(0, 0, 1)
-		}
-		*field.target = &start
+		bound := start.Add(-24 * time.Hour)
+		f.CoarseSentOnOrAfter = &bound
 	}
-	if f.SentOnOrAfter != nil && f.SentBefore != nil && !f.SentOnOrAfter.Before(*f.SentBefore) {
+	if f.EndDate != "" {
+		end, err := domain.ParseDate(f.EndDate)
+		if err != nil {
+			return domain.PageResult[domain.Delivery]{}, err
+		}
+		bound := end.AddDate(0, 0, 1).Add(24 * time.Hour)
+		f.CoarseSentBefore = &bound
+	}
+	if f.StartDate != "" && f.EndDate != "" && f.EndDate < f.StartDate {
 		return domain.PageResult[domain.Delivery]{}, domain.Invalid("end date precedes start date")
 	}
 	return s.repo.ListDeliveries(ctx, actor, scope, f)

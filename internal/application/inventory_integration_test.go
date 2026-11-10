@@ -337,7 +337,11 @@ func TestInventoryProjectStockLastDeliveryUsesNullLastAndStableTieBreak(t *testi
 
 func TestInventoryDeliveryListFiltersSentBusinessDatesAndPaginatesTies(t *testing.T) {
 	f := inventorySetup(t)
-	f.inventory = application.NewInventory(postgres.NewInventoryRepository(f.db), time.FixedZone("UTC+04", 4*60*60))
+	location, err := time.LoadLocation("Asia/Muscat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.inventory = application.NewInventory(postgres.NewInventoryRepository(f.db), location)
 	material := f.material(t, "Cement", "Mix", 10000)
 	first, second := f.send(t, material.ID, 1000), f.send(t, material.ID, 1000)
 	other, err := f.inventory.InitiateDelivery(f.ctx, f.manager, domain.CompanyDeliveryScope(), f.otherProjectID, []domain.DeliveryLineInput{{MaterialID: material.ID, Quantity: 1000}})
@@ -440,5 +444,65 @@ func TestInventoryUnusedCatalogueEntryCanBeUpdatedAndDeleted(t *testing.T) {
 	}
 	if _, err := f.inventory.GetMaterial(f.ctx, f.member, m.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("deleted material still readable: %v", err)
+	}
+}
+
+func TestInventoryDeliveryLocalDateAcrossMidnightTransitions(t *testing.T) {
+	for _, tc := range []struct {
+		zone string
+		sent [4]string
+	}{
+		{"America/Sao_Paulo", [4]string{"2018-11-04T02:30:00Z", "2018-11-04T03:00:00Z", "2018-11-05T01:30:00Z", "2018-11-05T02:00:00Z"}},
+		{"America/Havana", [4]string{"2018-11-04T03:59:00Z", "2018-11-04T04:30:00Z", "2018-11-04T05:30:00Z", "2018-11-05T05:00:00Z"}},
+	} {
+		t.Run(tc.zone, func(t *testing.T) {
+			f := inventorySetup(t)
+			loc, err := time.LoadLocation(tc.zone)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.inventory = application.NewInventory(postgres.NewInventoryRepository(f.db), loc)
+			material := f.material(t, "Cement", "Mix", 10000)
+			var ids [4]int64
+			for i, stamp := range tc.sent {
+				delivery := f.send(t, material.ID, 1000)
+				ids[i] = delivery.ID
+				if err := f.db.Exec("UPDATE deliveries SET sent_at = ?::timestamptz WHERE id = ?", stamp, delivery.ID).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			const day = "2018-11-04"
+			for _, scope := range []struct {
+				name  string
+				actor domain.Actor
+				scope domain.DeliveryScope
+			}{
+				{"company", f.manager, domain.CompanyDeliveryScope()},
+				{"project", f.member, domain.ProjectDeliveryScope(f.projectID)},
+			} {
+				for _, bounds := range []struct {
+					name, start, end string
+					want             []int64
+				}{
+					{"single-day", day, day, []int64{ids[2], ids[1]}},
+					{"start-only", day, "", []int64{ids[3], ids[2], ids[1]}},
+					{"end-only", "", day, []int64{ids[2], ids[1], ids[0]}},
+				} {
+					t.Run(scope.name+"/"+bounds.name, func(t *testing.T) {
+						result, err := f.inventory.ListDeliveries(f.ctx, scope.actor, scope.scope, domain.DeliveryFilter{StartDate: bounds.start, EndDate: bounds.end})
+						if err != nil {
+							t.Fatal(err)
+						}
+						got := make([]int64, 0, len(result.Items))
+						for _, item := range result.Items {
+							got = append(got, item.ID)
+						}
+						if !slices.Equal(got, bounds.want) {
+							t.Fatalf("got IDs %v, want %v (before/within/within/after IDs %v)", got, bounds.want, ids)
+						}
+					})
+				}
+			}
+		})
 	}
 }
