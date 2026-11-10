@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - User requested GPT-6.1 Sol implementation agents, with the root orchestrating. Work on `feat/sitetrack-backend`; preserve `main` until review.
-- Do not start Docker or its daemon. Native PostgreSQL is available for isolated tests. No deployment, application submission or email to the recruiter.
+- Docker Desktop is authorized for verification; isolate test containers and leave unrelated services untouched. No deployment, application submission or email to the recruiter.
 - Read the full brief before choosing contracts. Every listed screen/scale requirement is in scope. Every unspecified behavior must have a documented decision.
 - Domain and ports must not import GORM, HTTP, SQL drivers or concrete adapters.
 - Client input must never control SQL identifiers without a fixed allowlist; bind all values. Enforce bounded request sizes and list limits.
@@ -81,5 +81,5 @@
 - [ ] Implement deterministic small/full presets, full target counts, valid acyclic graphs, nonnegative consistent stocks and auditable delivery lines. Require explicit opt-in for destructive reset of a nonempty database.
 - [ ] Test small seed, repeat/rerun behavior, known user login, every screen query and representative query plans; provide full-scale command and honest measured results.
 - [ ] Document endpoints, auth/refresh/logout, all query options, role matrix, decisions/trade-offs, test and seed commands, demo credentials and remaining limits.
-- [ ] Verify `go test -race ./...`, `go vet ./...`, builds, native PostgreSQL integration suite, clean diff and `docker compose config`. Use CI to validate Compose execution without starting local Docker.
+- [ ] Verify `go test -race ./...`, `go vet ./...`, builds, PostgreSQL integration suite, clean diff, `docker compose config` and complete Compose startup. Repeat the relevant checks in CI.
 - [ ] Have the root run independent final review, fix concrete findings, push the feature branch and open a reviewable PR. Do not submit the job application.
