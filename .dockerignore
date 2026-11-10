@@ -1,0 +1,9 @@
+.git
+.github
+.superpowers
+.env
+.env.*
+bin
+docs
+coverage.out
+**/*_test.go

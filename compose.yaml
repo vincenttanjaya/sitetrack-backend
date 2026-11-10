@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: sitetrack
+      POSTGRES_USER: sitetrack
+      POSTGRES_PASSWORD: sitetrack-local
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://sitetrack:sitetrack-local@db:5432/sitetrack?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-}
+      BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-Asia/Muscat}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
+      REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-720h}
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8080/readyz"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+    stop_grace_period: 15s
+
+volumes:
+  db-data:
